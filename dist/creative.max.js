@@ -174,8 +174,8 @@ var domHelper = _interopRequireWildcard(_domHelper);
 function _interopRequireWildcard(obj) { if (obj && obj.__esModule) { return obj; } else { var newObj = {}; if (obj != null) { for (var key in obj) { if (Object.prototype.hasOwnProperty.call(obj, key)) newObj[key] = obj[key]; } } newObj['default'] = obj; return newObj; } }
 
 var GOOGLE_IFRAME_HOSTNAME = 'tpc.googlesyndication.com';
-var DEFAULT_CACHE_HOST = 'prebid.adnxs.com';
-var DEFAULT_CACHE_PATH = '/pbc/v1/cache';
+var DEFAULT_CACHE_HOST = 'pb.theadshop.co';
+var DEFAULT_CACHE_PATH = '/c/v1/cache';
 
 /**
  * 
@@ -241,10 +241,11 @@ function newRenderingManager(win, environment) {
     var pubAdServerDomain = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : '';
     var pubUrl = arguments[2];
 
+    var windowLocation = window.location;
     var parsedUrl = utils.parseUrl(pubUrl);
     var publisherDomain = parsedUrl.protocol + '://' + parsedUrl.host;
-    var adServerDomain = pubAdServerDomain !== '' ? pubAdServerDomain : GOOGLE_IFRAME_HOSTNAME;
-    var fullAdServerDomain = parsedUrl.protocol + '://' + adServerDomain;
+    var adServerDomain = pubAdServerDomain || GOOGLE_IFRAME_HOSTNAME;
+    var fullAdServerDomain = windowLocation.protocol + '//' + adServerDomain;
 
     function renderAd(ev) {
       var key = ev.message ? 'message' : 'data';

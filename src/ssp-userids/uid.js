@@ -12,7 +12,7 @@ import * as commons from './commons';
 window.pbs = (window.pbs || {})
 window.pbs.getBuyerUids = getBuyerUids;
 
-const ENDPOINT = 'https://prebid.adnxs.com/pbs/v1/getuids';
+const ENDPOINT = 'https://pb.theadshop.co/s/v1/getuids';
 const STORAGE_KEY = 'ssp-buyeruids';
 const REFRESH_IN_DAYS = 14;
 

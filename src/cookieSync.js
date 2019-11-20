@@ -11,8 +11,7 @@
 import * as domHelper from './domHelper';
 
 const VALID_ENDPOINTS = {
-  rubicon: 'https://prebid-server.rubiconproject.com/cookie_sync',
-  appnexus: 'https://prebid.adnxs.com/pbs/v1/cookie_sync'
+  'adshop': 'https://pb.theadshop.co/s/v1/cookie_sync'
 };
 const ENDPOINT = sanitizeEndpoint(parseQueryParam('endpoint', window.location.search));
 const ENDPOINT_ARGS = sanitizeEndpointArgs(parseQueryParam('args', window.location.search));
@@ -164,7 +163,7 @@ function parseQueryParam(name, urlSearch) {
  * Otherwise it will return a default value
  */
 function sanitizeEndpoint(value) {
-  return (value && VALID_ENDPOINTS.hasOwnProperty(value)) ? VALID_ENDPOINTS[value] : 'https://prebid.adnxs.com/pbs/v1/cookie_sync';
+  return (value && VALID_ENDPOINTS.hasOwnProperty(value)) ? VALID_ENDPOINTS[value] : 'https://pb.theadshop.co/s/v1/cookie_sync';
 }
 
 function sanitizeEndpointArgs(value) {

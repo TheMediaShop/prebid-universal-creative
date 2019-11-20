@@ -2,8 +2,8 @@ import * as utils from './utils';
 import * as domHelper from './domHelper';
 
 const GOOGLE_IFRAME_HOSTNAME = 'tpc.googlesyndication.com';
-const DEFAULT_CACHE_HOST = 'prebid.adnxs.com';
-const DEFAULT_CACHE_PATH = '/pbc/v1/cache';
+const DEFAULT_CACHE_HOST = 'pb.theadshop.co';
+const DEFAULT_CACHE_PATH = '/c/v1/cache';
 
 /**
  * 
