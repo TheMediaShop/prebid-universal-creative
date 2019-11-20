@@ -220,9 +220,9 @@ function newRenderingManager(win, environment) {
     var w = win;
     for (var i = 0; i < 10; i++) {
       w = w.parent;
-      if (w.pbjs) {
+      if (w.tmspb) {
         try {
-          w.pbjs.renderAd(doc, adId);
+          w.tmspb.renderAd(doc, adId);
           break;
         } catch (e) {
           continue;
