@@ -1,5 +1,5 @@
 {
-  "name": "prebid-universal-creative",
+  "name": "tas-prebid-universal-creative",
   "version": "1.6.0-pre",
   "description": "Universal creative for Prebid apps",
   "main": "dist/creative.js",
