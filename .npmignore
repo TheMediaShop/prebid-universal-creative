@@ -1,0 +1,16 @@
+.travis.yml
+.circleci/
+.github/
+.idea/
+dist/
+node/
+node_modules/
+resources/
+src/
+test/
+testpages/
+*.log
+*.tgz
+*.iml
+.npmrc
+.nvmrc

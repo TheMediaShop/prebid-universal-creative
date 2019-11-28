@@ -14,7 +14,7 @@ You can find a detailed explanations on the [Prebid Universal Creative](http://p
 > **important:** If you’re using the `Send All Bids` scenario (where every bidder has a separate order), the creative and targeting will be different from the example shown here. See [Send All Bids](http://prebid.org/adops/send-all-bids-adops.html) for details.
 
 ```html
-<script src = "https://cdn.jsdelivr.net/npm/prebid-universal-creative@latest/dist/creative.js"></script>
+<script src = "https://cdn.jsdelivr.net/npm/@tashop/prebid-universal-creative@latest/dist/creative.js"></script>
 <script>
   var ucTagData = {};
   ucTagData.adServerDomain = "";
