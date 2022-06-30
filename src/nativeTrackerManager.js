@@ -3,12 +3,13 @@
  */
 import { parseUrl, triggerPixel, transformAuctionTargetingData } from './utils';
 import { newNativeAssetManager } from './nativeAssetManager';
+import {prebidMessenger} from './messaging.js';
 
 const AD_ANCHOR_CLASS_NAME = 'pb-click';
 const AD_DATA_ADID_ATTRIBUTE = 'pbAdId';
 
 export function newNativeTrackerManager(win) {
-  let publisherDomain;
+  let sendMessage;
 
   function findAdElements(className) {
     let adElements = win.document.getElementsByClassName(className);
@@ -30,19 +31,7 @@ export function newNativeTrackerManager(win) {
     return adId || '';
   }
 
-  function readAdIdFromEvent(event) {
-    let adId =
-      event &&
-      event.target &&
-      event.target.attributes &&
-      event.target.attributes[AD_DATA_ADID_ATTRIBUTE] &&
-      event.target.attributes[AD_DATA_ADID_ATTRIBUTE].value;
-
-    return adId || '';
-  }
-
-  function loadClickTrackers(event) {
-    let adId = readAdIdFromEvent(event);
+  function loadClickTrackers(event, adId) {
     fireTracker(adId, 'click');
   }
 
@@ -57,7 +46,10 @@ export function newNativeTrackerManager(win) {
     adElements = adElements || findAdElements(AD_ANCHOR_CLASS_NAME);
 
     for (let i = 0; i < adElements.length; i++) {
-      adElements[i].addEventListener('click', listener, true);
+      let adId = readAdIdFromSingleElement(adElements[i]);
+      adElements[i].addEventListener('click', function(event) {
+        listener(event, adId);
+      }, true);
     }
   }
 
@@ -72,14 +64,15 @@ export function newNativeTrackerManager(win) {
         message.action = 'click';
       }
 
-      win.parent.postMessage(JSON.stringify(message), publisherDomain);
+      sendMessage(message);
     }
   }
 
   // START OF MAIN CODE
   let startTrackers = function (dataObject) {
     const targetingData = transformAuctionTargetingData(dataObject);
-    const nativeAssetManager = newNativeAssetManager(window);
+    sendMessage = prebidMessenger(targetingData.pubUrl, win);
+    const nativeAssetManager = newNativeAssetManager(window, targetingData.pubUrl);
 
     if (targetingData && targetingData.env === 'mobile-app') {
       let cb = function({clickTrackers, impTrackers} = {}) {
@@ -88,16 +81,13 @@ export function newNativeTrackerManager(win) {
         }
         const boundedLoadMobileClickTrackers = loadMobileClickTrackers.bind(null, clickTrackers);
         attachClickListeners(false, boundedLoadMobileClickTrackers);
-        
+
         (impTrackers || []).forEach(triggerPixel);
       }
       nativeAssetManager.loadMobileAssets(targetingData, cb);
     } else {
-      let parsedUrl = parseUrl(targetingData && targetingData.pubUrl);
-      publisherDomain = parsedUrl.protocol + '://' + parsedUrl.host;
-  
       let adElements = findAdElements(AD_ANCHOR_CLASS_NAME);
-      
+
       nativeAssetManager.loadAssets(
         readAdIdFromElement(adElements),
         attachClickListeners

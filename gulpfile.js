@@ -45,12 +45,40 @@ function buildNativeDev() {
     .pipe(gulp.dest('build'));
 }
 
+function buildNativeRenderDev() {
+  var cloned = _.cloneDeep(webpackConfig);
+  cloned.output.filename = 'native-render.js';
+
+  return gulp.src(['src/nativeRender.js'])
+    .pipe(webpackStream(cloned))
+    .pipe(gulp.dest('build'));
+}
+
 function buildCookieSync() {
   let cloned = _.cloneDeep(webpackConfig);
   delete cloned.devtool;
 
   let target = gulp.src('resources/load-cookie.html');
   let sources = gulp.src(['src/cookieSync.js'])
+    .pipe(webpackStream(cloned))
+    .pipe(uglify());
+
+  return target.pipe(inject(sources, {
+    starttag: '// cookie-sync start',
+    endtag: '// end',
+    transform: function (filePath, file) {
+      return file.contents.toString('utf8')
+    }
+  }))
+    .pipe(gulp.dest('dist'));
+}
+
+function buildCookieSyncWithConsent() {
+  let cloned = _.cloneDeep(webpackConfig);
+  delete cloned.devtool;
+
+  let target = gulp.src('resources/load-cookie-with-consent.html');
+  let sources = gulp.src(['src/cookieSyncWithConsent.js'])
     .pipe(webpackStream(cloned))
     .pipe(uglify());
 
@@ -103,6 +131,18 @@ function buildNative() {
     .pipe(gulp.dest('dist'));
 }
 
+function buildNativeRender() {
+  var cloned = _.cloneDeep(webpackConfig);
+  delete cloned.devtool;
+  cloned.output.filename = 'native-render.js';
+
+  return gulp.src(['src/nativeRender.js'])
+    .pipe(webpackStream(cloned))
+    .pipe(uglify())
+    .pipe(header('/* v<%= creative.version %>\n' + dateString + ' */\n', { creative: creative }))
+    .pipe(gulp.dest('dist'));
+}
+
 function buildUid() {
   var cloned = _.cloneDeep(webpackConfig);
   delete cloned.devtool;
@@ -113,6 +153,11 @@ function buildUid() {
     .pipe(uglify())
     .pipe(header('/* v<%= creative.version %>\n' + dateString + ' */\n', { creative: creative }))
     .pipe(gulp.dest('dist'));
+}
+
+function includeStaticVastXmlFile() {
+  let target = gulp.src('static/prebid-mobile-rewarded-vast.xml');
+  return target.pipe(gulp.dest('dist'));
 }
 
 // Run the unit tests.
@@ -160,7 +205,7 @@ function setupE2E(done) {
 
 gulp.task('test', gulp.series(clean, test));
 
-gulp.task('e2e-test', gulp.series(clean, setupE2E, gulp.parallel(buildDev, buildCookieSync, buildNativeDev, buildUidDev, watch), test));
+gulp.task('e2e-test', gulp.series(clean, setupE2E, gulp.parallel(buildDev, buildCookieSync, buildCookieSyncWithConsent, buildNativeDev, buildNativeRenderDev, buildUidDev, includeStaticVastXmlFile, watch), test));
 
 function watch(done) {
   const mainWatcher = gulp.watch([
@@ -174,8 +219,8 @@ function watch(done) {
     port,
     root: './'
   });
-  
-  mainWatcher.on('all', gulp.series(clean, gulp.parallel(buildDev, buildNativeDev, buildCookieSync, buildUidDev), test));
+
+  mainWatcher.on('all', gulp.series(clean, gulp.parallel(buildDev, buildNativeDev, buildNativeRenderDev, buildCookieSync, buildCookieSyncWithConsent, buildUidDev, includeStaticVastXmlFile), test));
   done();
 }
 
@@ -183,9 +228,9 @@ function openWebPage() {
   return opens(`${(argv.https) ? 'https' : 'http'}://localhost:${port}`);
 }
 
-gulp.task('serve', gulp.series(clean, gulp.parallel(buildDev, buildNativeDev, buildCookieSync, buildUidDev, watch, test), openWebPage));
+gulp.task('serve', gulp.series(clean, gulp.parallel(buildDev, buildNativeDev, buildNativeRenderDev, buildCookieSync, buildCookieSyncWithConsent, buildUidDev, includeStaticVastXmlFile, watch, test), openWebPage));
 
-gulp.task('build', gulp.parallel(buildProd, buildCookieSync, buildNative, buildUid));
+gulp.task('build', gulp.parallel(buildProd, buildCookieSync, buildCookieSyncWithConsent, buildNative, buildNativeRender, buildUid, includeStaticVastXmlFile));
 
 gulp.task('test-coverage', (done) => {
   new KarmaServer(karmaConfMaker(true, false, false), newKarmaCallback(done)).start();
