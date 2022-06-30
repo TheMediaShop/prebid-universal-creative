@@ -8,7 +8,7 @@
   },
   "scripts": {
     "test": "echo test",
-    "prepublishOnly": "sed -i 's/\"globalVarName\".*/\"globalVarName\": \"tmspb\",/' ./package.json && gulp build"
+    "prepublish": "sed -i 's/\"globalVarName\".*/\"globalVarName\": \"tmspb\",/' ./package.json && gulp build"
   },
   "repository": {
     "type": "git",
