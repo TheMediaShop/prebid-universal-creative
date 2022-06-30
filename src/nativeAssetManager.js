@@ -3,7 +3,8 @@
  * values in native creative templates.
  */
 
-import { sendRequest } from './utils';
+import { sendRequest, loadScript } from './utils';
+import {prebidMessenger} from './messaging.js';
 
 /*
  * Native asset->key mapping from Prebid.js/src/constants.json
@@ -27,6 +28,7 @@ const NATIVE_KEYS = {
   phone: 'hb_native_phone',
   price: 'hb_native_price',
   salePrice: 'hb_native_saleprice',
+  rendererUrl: 'hb_renderer_url',
 };
 
 // Asset type mapping as per Native IAB spec 1.2
@@ -55,17 +57,28 @@ const assetTypeMapping = {
 const DEFAULT_CACHE_HOST = 'prebid.adnxs.com';
 const DEFAULT_CACHE_PATH = '/pbc/v1/cache';
 
-export function newNativeAssetManager(win) {
+export function newNativeAssetManager(win, pubUrl) {
+  const sendMessage = prebidMessenger(pubUrl, win);
   let callback;
   let errorCountEscapeHatch = 0;
+  let cancelMessageListener;
+
+  function stopListening() {
+    if (cancelMessageListener != null) {
+      cancelMessageListener();
+      cancelMessageListener = null;
+    }
+  }
+
+
 
   function getCacheEndpoint(cacheHost, cachePath) {
     let host = (typeof cacheHost === 'undefined' || cacheHost === "") ? DEFAULT_CACHE_HOST : cacheHost;
     let path = (typeof cachePath === 'undefined' || cachePath === "") ? DEFAULT_CACHE_PATH : cachePath;
-  
+
     return `https://${host}${path}`;
   }
-  
+
   function parseResponse(response) {
     let bidObject;
     try {
@@ -75,7 +88,7 @@ export function newNativeAssetManager(win) {
     }
     return bidObject;
   }
-  
+
   function transformToPrebidKeys(adMarkup) {
     let assets = [];
     let clicktrackers;
@@ -104,7 +117,7 @@ export function newNativeAssetManager(win) {
           'key' : 'title',
           'value' : asset.title.text
         })
-      } 
+      }
     })
 
     if (adMarkup.link) {
@@ -136,7 +149,7 @@ export function newNativeAssetManager(win) {
           win.document.body.innerHTML = newHtml;
 
           callback && callback({
-            clickTrackers: data.clicktrackers, 
+            clickTrackers: data.clicktrackers,
             impTrackers: data.imptrackers
           });
         } else {
@@ -160,14 +173,26 @@ export function newNativeAssetManager(win) {
   /*
    * Entry point to search for placeholderes and set up postmessage roundtrip
    * to retrieve native assets. Looks for placeholders for the given adId and
-   * fires a callback after the native html is updated.
+   * fires a callback after the native html is updated. If no placeholders found
+   * and requestAllAssets flag is set in the tag, postmessage roundtrip
+   * to retrieve native assets that have a value on the corresponding bid
    */
   function loadAssets(adId, cb) {
-    const placeholders = scanForPlaceholders(adId);
+    const placeholders = scanForPlaceholders(adId), flag = (typeof win.pbNativeData !== 'undefined');
 
-    if (placeholders.length > 0) {
+    if (flag && win.pbNativeData.hasOwnProperty('assetsToReplace')) {
+        win.pbNativeData.assetsToReplace.forEach((asset) => {
+          const key = (asset.match(/hb_native_/i)) ? asset : NATIVE_KEYS[asset];
+          if (key) {placeholders.push(key);}
+        });
+    }
+
+    if (flag && win.pbNativeData.hasOwnProperty('requestAllAssets') && win.pbNativeData.requestAllAssets) {
       callback = cb;
-      requestAssets(adId, placeholders);
+      cancelMessageListener = requestAllAssets(adId);
+    } else if (placeholders.length > 0) {
+      callback = cb;
+      cancelMessageListener = requestAssets(adId, placeholders);
     }
   }
 
@@ -176,11 +201,13 @@ export function newNativeAssetManager(win) {
    */
   function scanForPlaceholders(adId) {
     let placeholders = [];
+    const doc = win.document;
+    const flag = (typeof win.pbNativeData !== 'undefined');
 
     Object.keys(NATIVE_KEYS).forEach(key => {
       const placeholderKey = NATIVE_KEYS[key];
-      const placeholder = (adId) ? `${placeholderKey}:${adId}` : `${placeholderKey}`;
-      const placeholderIndex = win.document.body.innerHTML.indexOf(placeholder);
+      const placeholder = (adId && !flag) ? `${placeholderKey}:${adId}` : `${placeholderKey}`;
+      const placeholderIndex = (~doc.body.innerHTML.indexOf(placeholder)) ? doc.body.innerHTML.indexOf(placeholder) : (doc.head.innerHTML && doc.head.innerHTML.indexOf(placeholder));
 
       if (~placeholderIndex) {
         placeholders.push(placeholderKey);
@@ -195,8 +222,6 @@ export function newNativeAssetManager(win) {
    * creative template, and setups up a listener for when Prebid responds.
    */
   function requestAssets(adId, assets) {
-    win.addEventListener('message', replaceAssets, false);
-
     const message = {
       message: 'Prebid Native',
       action: 'assetRequest',
@@ -204,7 +229,33 @@ export function newNativeAssetManager(win) {
       assets,
     };
 
-    win.parent.postMessage(JSON.stringify(message), '*');
+    return sendMessage(message, replaceAssets);
+  }
+
+  /*
+   * Sends postmessage to Prebid for asset placeholders found in the native
+   * creative template, and setups up a listener for when Prebid responds.
+   */
+  function requestAllAssets(adId) {
+    const message = {
+      message: 'Prebid Native',
+      action: 'allAssetRequest',
+      adId,
+    };
+    return sendMessage(message, replaceAssets);
+  }
+
+  /*
+   * Sends postmessage to Prebid for native resize
+   */
+  function requestHeightResize(adId, height) {
+    const message = {
+      message: 'Prebid Native',
+      action: 'resizeNativeHeight',
+      adId,
+      height,
+    };
+    sendMessage(message);
   }
 
   /*
@@ -221,18 +272,61 @@ export function newNativeAssetManager(win) {
          * if for some reason Prebid never responds with the native assets,
          * get rid of this listener because other messages won't stop coming
          */
-        win.removeEventListener('message', replaceAssets);
+        stopListening();
       }
       return;
     }
 
     if (data.message === 'assetResponse') {
       const body = win.document.body.innerHTML;
-      const newHtml = replace(body, data);
+      const head = win.document.head.innerHTML;
+      const flag = (typeof win.pbNativeData !== 'undefined');
 
-      win.document.body.innerHTML = newHtml;
-      callback && callback();
-      win.removeEventListener('message', replaceAssets);
+      if (flag && data.adId !== win.pbNativeData.adId) return;
+
+      if (head) win.document.head.innerHTML = replace(head, data);
+
+      if ((data.hasOwnProperty('rendererUrl') && data.rendererUrl) || (flag && win.pbNativeData.hasOwnProperty('rendererUrl'))) {
+        if (win.renderAd) {
+          const newHtml = (win.renderAd && win.renderAd(data.assets)) || '';
+
+          win.document.body.innerHTML = body + newHtml;
+          callback && callback();
+          stopListening();
+          requestHeightResize(data.adId, (document.body.clientHeight || document.body.offsetHeight));
+        } else if (document.getElementById('pb-native-renderer')) {
+          document.getElementById('pb-native-renderer').addEventListener('load', function() {
+            const newHtml = (win.renderAd && win.renderAd(data.assets)) || '';
+
+            win.document.body.innerHTML = body + newHtml;
+            callback && callback();
+            stopListening();
+            requestHeightResize(data.adId, (document.body.clientHeight || document.body.offsetHeight));
+          });
+        } else {
+          loadScript(win, ((flag && win.pbNativeData.hasOwnProperty('rendererUrl') && win.pbNativeData.rendererUrl) || data.rendererUrl), function() {
+            const newHtml = (win.renderAd && win.renderAd(data.assets)) || '';
+
+            win.document.body.innerHTML = body + newHtml;
+            callback && callback();
+            stopListening();
+            requestHeightResize(data.adId, (document.body.clientHeight || document.body.offsetHeight));
+          })
+        }
+      } else if ((data.hasOwnProperty('adTemplate') && data.adTemplate)||(flag && win.pbNativeData.hasOwnProperty('adTemplate'))) {
+        const template =  (flag && win.pbNativeData.hasOwnProperty('adTemplate') && win.pbNativeData.adTemplate) || data.adTemplate;
+        const newHtml = replace(template, data);
+        win.document.body.innerHTML = body + newHtml;
+        callback && callback();
+        stopListening();
+        requestHeightResize(data.adId, (document.body.clientHeight || document.body.offsetHeight));
+      } else {
+        const newHtml = replace(body, data);
+
+        win.document.body.innerHTML = newHtml;
+        callback && callback();
+        stopListening();
+      }
     }
   }
 
@@ -244,8 +338,10 @@ export function newNativeAssetManager(win) {
     let html = document;
 
     (assets || []).forEach(asset => {
-      const searchString = (adId) ? `${NATIVE_KEYS[asset.key]}:${adId}` : `${NATIVE_KEYS[asset.key]}`
-      html = html.replace(searchString, asset.value);
+      const flag = (typeof win.pbNativeData !== 'undefined');
+      const searchString = (adId && !flag) ? `${NATIVE_KEYS[asset.key]}:${adId}` : ((flag) ? '##'+`${NATIVE_KEYS[asset.key]}`+'##' : `${NATIVE_KEYS[asset.key]}`);
+      const searchStringRegex = new RegExp(searchString, 'g');
+      html = html.replace(searchStringRegex, asset.value);
     });
 
     return html;

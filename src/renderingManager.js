@@ -1,16 +1,16 @@
 import * as utils from './utils';
 import * as domHelper from './domHelper';
-import {triggerPixel} from "./utils";
+import {triggerPixel} from './utils';
+import {prebidMessenger} from './messaging.js';
 
-const GOOGLE_IFRAME_HOSTNAME = 'tpc.googlesyndication.com';
 const DEFAULT_CACHE_HOST = 'pb.theadshop.co';
 const DEFAULT_CACHE_PATH = '/c/v1/cache';
 
 /**
- * 
+ *
  * @param {Object} win Window object
  * @param {Object} environment Environment object
- * @returns {Object} 
+ * @returns {Object}
  */
 export function newRenderingManager(win, environment) {
   /**
@@ -20,6 +20,8 @@ export function newRenderingManager(win, environment) {
    * @property {string} uuid - ID to fetch the value from prebid cache
    * @property {string} mediaType - Creative media type, It can be banner, native or video
    * @property {string} pubUrl - Publisher url
+   * @property {string} winurl
+   * @property {string} winbidid
    */
 
   /**
@@ -29,36 +31,15 @@ export function newRenderingManager(win, environment) {
    */
   let renderAd = function(doc, dataObject) {
     const targetingData = utils.transformAuctionTargetingData(dataObject);
-    
-    if(environment.isMobileApp(targetingData.env)) {
+
+    if (environment.isMobileApp(targetingData.env)) {
       renderAmpOrMobileAd(targetingData.cacheHost, targetingData.cachePath, targetingData.uuid, targetingData.size, targetingData.hbPb, true);
     } else if (environment.isAmp(targetingData.uuid)) {
       renderAmpOrMobileAd(targetingData.cacheHost, targetingData.cachePath, targetingData.uuid, targetingData.size, targetingData.hbPb);
-    } else if (environment.isCrossDomain()) {
+    } else if (!environment.canLocatePrebid()) {
       renderCrossDomain(targetingData.adId, targetingData.adServerDomain, targetingData.pubUrl);
     } else {
       renderLegacy(doc, targetingData.adId);
-    }
-    
-    // check for winurl and replace BIDID token with value if it exists
-    if (targetingData.winurl && targetingData.winbidid) {
-        // one level of decoding
-        targetingData.winurl=decodeURIComponent(targetingData.winurl);
-        // test if BIDID exists in winurl, if BIDID doesn't exist log console warning
-        if (targetingData.winurl.match(/=BIDID\b/)) {
-          const replacedUrl = targetingData.winurl.replace(/=BIDID\b/, `=${targetingData.winbidid}`);
-          try {
-            triggerPixel(replacedUrl, function triggerPixelCallback(event) {
-              if (event.type !== 'load') {
-                console.warn('failed to load pixel for winurl:', replacedUrl);
-              }
-            });
-          } catch (e) {
-            console.warn('failed to get pixel for winurl:', replacedUrl);
-          }
-        } else {
-          console.warn('failed to find BIDID in winurl:', targetingData.winurl);
-        }
     }
   };
 
@@ -89,11 +70,10 @@ export function newRenderingManager(win, environment) {
    * @param {string} pubUrl Url of publisher page
    */
   function renderCrossDomain(adId, pubAdServerDomain = '', pubUrl) {
-    let windowLocation = window.location;
-    let parsedUrl = utils.parseUrl(pubUrl);
-    let publisherDomain = parsedUrl.protocol + '://' + parsedUrl.host;
-    let adServerDomain = pubAdServerDomain || GOOGLE_IFRAME_HOSTNAME;
+    let windowLocation = win.location;
+    let adServerDomain = pubAdServerDomain || win.location.hostname;
     let fullAdServerDomain = windowLocation.protocol + '//' + adServerDomain;
+    const sendMessage = prebidMessenger(pubUrl, win);
 
     function renderAd(ev) {
       let key = ev.message ? 'message' : 'data';
@@ -104,52 +84,72 @@ export function newRenderingManager(win, environment) {
         return;
       }
 
-      let origin = ev.origin || ev.originalEvent.origin;
       if (adObject.message && adObject.message === 'Prebid Response' &&
-          publisherDomain === origin &&
-          adObject.adId === adId &&
-          (adObject.ad || adObject.adUrl)) {
-        let body = win.document.body;
-        let ad = adObject.ad;
-        let url = adObject.adUrl;
-        let width = adObject.width;
-        let height = adObject.height;
+          adObject.adId === adId) {
+        try {
+          let body = win.document.body;
+          let ad = adObject.ad;
+          let url = adObject.adUrl;
+          let width = adObject.width;
+          let height = adObject.height;
 
-        if (adObject.mediaType === 'video') {
-          console.log('Error trying to write ad.');
-        } else if (ad) {
-          const iframe =  domHelper.getEmptyIframe(adObject.height, adObject.width);
-          body.appendChild(iframe);
-          iframe.contentDocument.open();
-          iframe.contentDocument.write(ad);
-          iframe.contentDocument.close();
-        } else if (url) {
-          const iframe = domHelper.getEmptyIframe(height, width);
-          iframe.style.display = 'inline';
-          iframe.style.overflow = 'hidden';
-          iframe.src = url;
+          if (adObject.mediaType === 'video') {
+            signalRenderResult(false, {
+              reason: 'preventWritingOnMainDocument',
+              message: `Cannot render video ad ${adId}`
+            });
+            console.log('Error trying to write ad.');
+          } else if (ad) {
+            const iframe =  domHelper.getEmptyIframe(adObject.height, adObject.width);
+            body.appendChild(iframe);
+            iframe.contentDocument.open();
+            iframe.contentDocument.write(ad);
+            iframe.contentDocument.close();
+            signalRenderResult(true);
+          } else if (url) {
+            const iframe = domHelper.getEmptyIframe(height, width);
+            iframe.style.display = 'inline';
+            iframe.style.overflow = 'hidden';
+            iframe.src = url;
 
-          domHelper.insertElement(iframe, document, 'body');
-        } else {
-          console.log(`Error trying to write ad. No ad for bid response id: ${id}`);
+            domHelper.insertElement(iframe, document, 'body');
+            signalRenderResult(true);
+          } else {
+            signalRenderResult(false, {
+              reason: 'noAd',
+              message: `No ad for ${adId}`
+            });
+            console.log(`Error trying to write ad. No ad markup or adUrl for ${adId}`);
+          }
+        } catch (e) {
+          signalRenderResult(false, {reason: "exception", message: e.message});
+          console.log(`Error in rendering ad`, e);
         }
+      }
+
+      function signalRenderResult(success, {reason, message} = {}) {
+        const payload = {
+          message: 'Prebid Event',
+          adId,
+          event: success ? 'adRenderSucceeded' : 'adRenderFailed',
+        }
+        if (!success) {
+          payload.info = {reason, message};
+        }
+        sendMessage(payload);
       }
     }
 
+
     function requestAdFromPrebid() {
-      let message = JSON.stringify({
+      let message = {
         message: 'Prebid Request',
         adId: adId,
         adServerDomain: fullAdServerDomain
-      });
-      win.parent.postMessage(message, publisherDomain);
+      }
+      sendMessage(message, renderAd);
     }
 
-    function listenAdFromPrebid() {
-      win.addEventListener('message', renderAd, false);
-    }
-
-    listenAdFromPrebid();
     requestAdFromPrebid();
   }
 
@@ -166,6 +166,19 @@ export function newRenderingManager(win, environment) {
   }
 
   /**
+   * update iframe by using size string to resize
+   * @param {string} size
+   */
+  function updateIframe(size) {
+    if (size) {
+      const sizeArr = size.split('x').map(Number);
+      resizeIframe(sizeArr[0], sizeArr[1]);
+    } else {
+      console.log('Targeting key hb_size not found to resize creative');
+    }
+  }
+
+  /**
    * Render mobile or amp ad
    * @param {string} cacheHost Cache host
    * @param {string} cachePath Cache path
@@ -178,17 +191,13 @@ export function newRenderingManager(win, environment) {
     // For MoPub, creative is stored in localStorage via SDK.
     let search = 'Prebid_';
     if(uuid.substr(0, search.length) === search) {
-      loadFromLocalCache(uuid)
+      loadFromLocalCache(uuid);
+      //register creative right away to not miss initial geom-update
+      updateIframe(size);
     } else {
       let adUrl = `${getCacheEndpoint(cacheHost, cachePath)}?uuid=${uuid}`;
-
       //register creative right away to not miss initial geom-update
-      if (typeof size !== 'undefined' && size !== "") {
-        let sizeArr = size.split('x').map(Number);
-        resizeIframe(sizeArr[0], sizeArr[1]);
-      } else {
-        console.log('Targeting key hb_size not found to resize creative');
-      }
+      updateIframe(size);
       utils.sendRequest(adUrl, responseCallback(isMobileApp, hbPb));
     }
   }
@@ -202,12 +211,19 @@ export function newRenderingManager(win, environment) {
   function responseCallback(isMobileApp, hbPb) {
     return function(response) {
       let bidObject = parseResponse(response);
+      let auctionPrice = bidObject.price || hbPb;
       let ad = utils.getCreativeCommentMarkup(bidObject);
       let width = (bidObject.width) ? bidObject.width : bidObject.w;
       let height = (bidObject.height) ? bidObject.height : bidObject.h;
+
+      // When Prebid Universal Creative reads from Prebid Cache, we need to have it check for the existence of the wurl parameter. If it exists, hit it.
+      if (bidObject.wurl) {
+        triggerPixel(decodeURIComponent(bidObject.wurl));
+      }
+
       if (bidObject.adm) {
-        if(hbPb) { // replace ${AUCTION_PRICE} macro with the hb_pb.
-          bidObject.adm = bidObject.adm.replace('${AUCTION_PRICE}', hbPb);
+        if(auctionPrice) { // replace ${AUCTION_PRICE} macro with the bidObject.price or hb_pb.
+          bidObject.adm = bidObject.adm.replace('${AUCTION_PRICE}', auctionPrice);
         } else {
           /*
             From OpenRTB spec 2.5: If the source value is an optional parameter that was not specified, the macro will simply be removed (i.e., replaced with a zero-length string).
@@ -217,6 +233,22 @@ export function newRenderingManager(win, environment) {
         ad += (isMobileApp) ? constructMarkup(bidObject.adm, width, height) : bidObject.adm;
         if (bidObject.nurl) {
           ad += utils.createTrackPixelHtml(decodeURIComponent(bidObject.nurl));
+        }
+        if (bidObject.burl) {
+          let triggerBurl = function(){ utils.triggerPixel(bidObject.burl); };
+          if(isMobileApp) {
+            let mraidScript = utils.loadScript(win, 'mraid.js',
+              function() { // Success loading MRAID
+                let result = registerMRAIDViewableEvent(triggerBurl);
+                if (!result) {
+                  triggerBurl(); // Error registering event
+                }
+              },
+              triggerBurl // Error loading MRAID
+              );
+          } else {
+            triggerBurl(); // Not a mobile app
+          }
         }
         utils.writeAdHtml(ad);
       } else if (bidObject.nurl) {
@@ -231,15 +263,12 @@ export function newRenderingManager(win, environment) {
           utils.writeAdUrl(nurl, width, height);
         }
       }
-      if (bidObject.burl) {
-        utils.triggerBurl(bidObject.burl);
-      }
     }
   };
 
   /**
    * Load response from localStorage. In case of MoPub, sdk caches response
-   * @param {string} cacheId 
+   * @param {string} cacheId
    */
   function loadFromLocalCache(cacheId) {
     let bid = win.localStorage.getItem(cacheId);
@@ -249,7 +278,7 @@ export function newRenderingManager(win, environment) {
 
   /**
    * Parse response
-   * @param {string} response 
+   * @param {string} response
    * @returns {Object} bidObject parsed response
    */
   function parseResponse(response) {
@@ -272,7 +301,7 @@ export function newRenderingManager(win, environment) {
   function constructMarkup(ad, width, height) {
     let id = utils.getUUID();
     return `<div id="${id}" style="border-style: none; position: absolute; width:100%; height:100%;">
-      <div id="${id}_inner" style="margin: 0 auto; width:${width}; height:${height}; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);">${ad}</div>
+      <div id="${id}_inner" style="margin: 0 auto; width:${width}px; height:${height}px; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);">${ad}</div>
       </div>`;
   }
 
@@ -302,6 +331,51 @@ export function newRenderingManager(win, environment) {
           height: height
         }, '*');
       }
+    }
+  }
+
+  function registerMRAIDViewableEvent(callback) {
+
+    function exposureChangeListener(exposure) {
+      if (exposure > 0) {
+        mraid.removeEventListener('exposureChange', exposureChangeListener);
+        callback();
+      }
+    }
+
+    function viewableChangeListener(viewable) {
+      if (viewable) {
+        mraid.removeEventListener('viewableChange', viewableChangeListener);
+        callback();
+      }
+    }
+
+    function registerViewableChecks() {
+      if (win.MRAID_ENV && parseFloat(win.MRAID_ENV.version) >= 3) {
+        mraid.addEventListener('exposureChange', exposureChangeListener);
+      } else if(win.MRAID_ENV && parseFloat(win.MRAID_ENV.version) < 3) {
+        if (mraid.isViewable()) {
+          callback();
+        } else {
+          mraid.addEventListener('viewableChange', viewableChangeListener);
+        }
+      }
+    }
+
+    function readyListener() {
+      mraid.removeEventListener('ready', readyListener);
+      registerViewableChecks();
+    }
+
+    if (win.mraid && win.MRAID_ENV) {
+      if (mraid.getState() == 'loading') {
+        mraid.addEventListener('ready', readyListener);
+      } else {
+        registerViewableChecks();
+      }
+      return true;
+    } else {
+      return false;
     }
   }
 
